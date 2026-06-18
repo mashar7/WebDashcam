@@ -177,6 +177,11 @@
         // 4. PROSES UPLOAD KE GOOGLE DRIVE
         async function uploadToDrive(blob) {
             log('Memulai upload ke Google Drive...');
+
+            // MASUKKAN FOLDER ID ANDA DI SINI
+            const FOLDER_ID = '1WGLRbTrGmgUJkpBMHtuN1FA3g-pZMhbT'; // Ganti dengan ID dari Langkah 1
+
+            
             try {
                 // TAHAP A: Unggah file mentah (media)
                 const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=media', {
