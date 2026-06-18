@@ -81,29 +81,32 @@
             client.requestAccessToken();
         }
 
-        // 2. AKSES KAMERA HP & WAKE LOCK (Layar anti-mati)
+        
+        // 2. AKSES KAMERA HP & WAKE LOCK (Resolusi FHD 1080p)
         async function startCamera() {
             try {
-                // Menggunakan kamera belakang ('environment'). Ubah ke 'user' jika ingin kamera depan.
                 stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, 
+                    video: { 
+                        facingMode: 'environment', 
+                        width: { ideal: 1920, min: 1280 }, // Meminta resolusi 1080p (FHD)
+                        height: { ideal: 1080, min: 720 },
+                        frameRate: { ideal: 30 } // Menjaga agar video tetap mulus
+                    }, 
                     audio: true 
                 });
                 document.getElementById('preview').srcObject = stream;
-                log('Kamera belakang berhasil diaktifkan.');
+                log('Kamera belakang FHD (1080p) berhasil diaktifkan.');
 
-                // Mengaktifkan Fitur Wake Lock agar layar HP tidak mengunci/mati otomatis
                 if ('wakeLock' in navigator) {
                     try {
                         wakeLock = await navigator.wakeLock.request('screen');
-                        log('Fitur Layar Selalu Menyala (Wake Lock) AKTIF.');
+                        log('Wake Lock AKTIF.');
                     } catch (err) {
                         log('Wake Lock gagal aktif: ' + err.message);
                     }
                 }
             } catch (err) {
                 log('Gagal mengakses kamera/mikrofon: ' + err.message);
-                alert('Pastikan memberikan izin kamera dan mikrofon di browser Anda!');
             }
         }
 
