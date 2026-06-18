@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Continuous Recorder</title>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #121212; color: white; margin: 0; padding: 20px; }
+        video { width: 100%; max-width: 400px; background: black; border-radius: 8px; margin-bottom: 10px; }
+        button { padding: 10px 20px; margin: 5px; font-size: 16px; cursor: pointer; border: none; border-radius: 5px; font-weight: bold; }
+        .btn-login { background: #4285F4; color: white; }
+        .btn-start { background: #0F9D58; color: white; }
+        .btn-record { background: #DB4437; color: white; }
+        .btn-stop { background: #F4B400; color: white; }
+        #logArea { margin-top: 20px; text-align: left; font-size: 12px; background: #1e1e1e; padding: 10px; border-radius: 5px; height: 150px; overflow-y: auto; color: #00ff00; }
+    </style>
+</head>
+<body>
+
+    <h2>DriveCam</h2>
+    <video id="preview" autoplay muted playsinline></video>
+    <br>
+    <button class="btn-login" onclick="loginGoogle()">1. Login Google Drive</button>
+    <button class="btn-start" onclick="startCamera()">2. Nyalakan Kamera</button>
+    <br>
+    <button class="btn-record" onclick="startRecordingCycle()">3. Mulai Rekam</button>
+    <button class="btn-stop" onclick="stopRecording()">Berhenti</button>
+
+    <div id="logArea"></div>
+
+    <script>
+        // KONFIGURASI PENTING
+        const CLIENT_ID = 'YOUR_CLIENT_ID_HERE.apps.googleusercontent.com'; // MASUKKAN CLIENT ID ANDA DI SINI
+        const CHUNK_DURATION = 1 * 60 * 1000; // 5 Menit dalam milidetik (Ubah jadi 60000 untuk tes 1 menit)
+
+        let accessToken = null;
+        let stream = null;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let recordTimer = null;
+        let wakeLock = null;
+
+        const logArea = document.getElementById('logArea');
+
+        function log(message) {
+            const time = new Date().toLocaleTimeString();
+            logArea.innerHTML += `[${time}] ${message}<br>`;
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        // 1. OTORISASI GOOGLE
+        const client = google.accounts.oauth2.initTokenClient({
+            client_id: CLIENT_ID,
+            scope: 'https://www.googleapis.com/auth/drive.file',
+            callback: (tokenResponse) => {
+                accessToken = tokenResponse.access_token;
+                log('Berhasil login. Token didapatkan.');
+            },
+        });
+
+        function loginGoogle() {
+            client.requestAccessToken();
+        }
+
+        // 2. AKSES KAMERA & WAKE LOCK (Mencegah layar mati)
+        async function startCamera() {
+            try {
+                // Gunakan kamera belakang (environment)
+                stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
+                document.getElementById('preview').srcObject = stream;
+                log('Kamera aktif.');
+
+                // Cegah layar mati
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    log('Wake Lock aktif (Layar tidak akan mati).');
+                }
+            } catch (err) {
+                log('Gagal akses kamera: ' + err.message);
+            }
+        }
+
+        // 3. SIKLUS PEREKAMAN
+        function startRecordingCycle() {
+            if (!accessToken) return alert("Harap Login Google terlebih dahulu!");
+            if (!stream) return alert("Harap nyalakan kamera terlebih dahulu!");
+            
+            log("Siklus perekaman dimulai...");
+            recordSegment();
+        }
+
+        function recordSegment() {
+            recordedChunks = [];
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9,opus' });
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) recordedChunks.push(e.data);
+            };
+
+            mediaRecorder.onstop = async () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                recordedChunks = []; // Hapus data dari RAM / Perangkat
+                log(`Memori RAM dibersihkan. Mempersiapkan upload...`);
+                
+                uploadToDrive(blob); // Proses upload
+            };
+
+            mediaRecorder.start();
+            log('Merekam bagian baru...');
+
+            // Atur timer untuk menghentikan rekaman saat ini dan memulai yang baru tanpa jeda
+            recordTimer = setTimeout(() => {
+                mediaRecorder.stop(); // Memicu proses upload
+                recordSegment();      // Rekam siklus berikutnya
+            }, CHUNK_DURATION);
+        }
+
+        function stopRecording() {
+            clearTimeout(recordTimer);
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            if (wakeLock !== null) {
+                wakeLock.release();
+                wakeLock = null;
+            }
+            log("Siklus perekaman dihentikan secara manual.");
+        }
+
+        // 4. UPLOAD KE GOOGLE DRIVE
+        async function uploadToDrive(blob) {
+            log('Mengunggah video ke Google Drive...');
+            try {
+                // Tahap A: Upload file fisik ke Drive (uploadType=media)
+                const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=media', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + accessToken,
+                        'Content-Type': 'video/webm'
+                    },
+                    body: blob
+                });
+                
+                const fileData = await res.json();
+
+                // Tahap B: Beri nama file tersebut sesuai waktu perekaman
+                const fileName = `DriveCam_${new Date().toISOString().replace(/:/g, '-')}.webm`;
+                await fetch(`https://www.googleapis.com/drive/v3/files/${fileData.id}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': 'Bearer ' + accessToken,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ name: fileName })
+                });
+
+                log(`BERHASIL! File disimpan dengan nama: ${fileName}`);
+                blob = null; // Memastikan memori Blob (RAM) terhapus 100%
+
+            } catch (error) {
+                log('GAGAL UPLOAD: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>
